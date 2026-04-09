@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제9대 전국동시지방선거 김천시의회 선거 후보자 명단</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS (for Maps) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Chart.js (for Donut Chart) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-slate-200 py-4 px-6 flex items-center justify-between z-10 relative">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 p-2 rounded-lg flex items-center justify-center">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/7/73/Korean_Voting_Stamp.svg" alt="투표 도장" class="h-6 w-6" style="filter: brightness(0) invert(1);" />
+            </div>
+            <h1 class="text-xl md:text-2xl font-bold text-slate-800">제9대 전국동시지방선거 <span class="text-blue-600">김천시의회</span> 후보자 명단</h1>
+        </div>
+        <div class="text-sm text-slate-500 hidden md:block">
+            지도에서 선거구를 클릭하여 후보자 명단을 확인하세요.
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Left: Map Area -->
+        <section class="w-full md:w-2/3 h-1/2 md:h-full relative bg-slate-200" id="map-container">
+            <!-- Loading Overlay -->
+            <div id="loading-overlay" class="absolute inset-0 bg-slate-100 z-50 flex flex-col items-center justify-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600 mb-4"></div>
+                <p class="text-slate-600 font-bold">지도 데이터를 불러오는 중입니다...</p>
+            </div>
+            
+            <!-- Map DIV -->
+            <div id="map" class="w-full h-full z-0"></div>
+        </section>
+
+        <!-- Right: Information & Editor Panel -->
+        <section class="w-full md:w-1/3 h-1/2 md:h-full bg-white flex flex-col border-l border-slate-200 z-10 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.1)] overflow-hidden">
+            
+            <!-- Candidates List/Edit Area (Top Half) -->
+            <div class="flex-1 flex flex-col overflow-hidden border-b border-slate-100">
+                <!-- Panel Header -->
+                <div class="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center h-16">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-lg font-bold text-slate-800" id="district-title">선거구를 선택해주세요</h2>
+                        <span id="district-badge" class="hidden px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full"></span>
+                    </div>
+                </div>
+                
+                <!-- Dynamic Content Container -->
+                <div class="flex-1 overflow-y-auto custom-scrollbar p-4 bg-white" id="candidates-container">
+                    <!-- Default Empty State -->
+                    <div id="empty-state" class="h-full flex flex-col items-center justify-center text-slate-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                        </svg>
+                        <p>지도에서 선거구를 클릭하시면</p>
+                        <p>후보자 명단을 확인하실 수 있습니다.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Donut Chart (Bottom Half) -->
+            <div class="h-64 md:h-72 p-4 bg-slate-50 flex flex-col">
+                <h3 class="text-sm font-bold text-slate-600 mb-2 uppercase tracking-wide">김천시 정당별 후보자 분포 현황</h3>
+                <div class="flex-1 relative w-full h-full">
+                    <canvas id="partyChart"></canvas>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <script>
+        // --- Configuration & Global State ---
+        const PARTIES = {
+            "민주당": { color: "#004EA2", baseNumber: "1" },    // 파란색, 기호 1번
+            "국민의힘": { color: "#E61E2B", baseNumber: "2" },  // 빨간색, 기호 2번
+            "무소속": { color: "#A0A0A0", baseNumber: null }    // 은색, 기본 기호 없음
+        };
+
+        const GEOJSON_URL = 'https://raw.githubusercontent.com/Hosain1291/gimcheon9th/refs/heads/main/%EA%B9%80%EC%B2%9C%EC%8B%9C%EC%9D%98%ED%9A%8C%20%EC%84%A0%EA%B1%B0%EA%B5%AC.geojson';
+
+        // --- ⬇️ 여기서 후보자 데이터를 직접 추가/수정하세요 ⬇️ ---
+        const candidatesDB = {
+            "김천시 가 선거구": [
+                { name: "권용덕", party: "민주당", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100157745/gicho/100157745.JPG?ver=2008974" },
+                { name: "박복순", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161663/gicho/100161663.JPG?ver=2035982"},
+                { name: "우지연", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161734/gicho/100161734.JPG?ver=2037528"},
+                { name: "이상영", party: "무소속", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100154940/gicho/100154940.JPG?ver=1992369"},
+                { name: "박건우", party: "무소속", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100156344/gicho/100156344.JPG?ver=2000998"},
+                { name: "이복상", party: "무소속", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161857/gicho/100161857.JPG?ver=2038434"}
+            ],
+            "김천시 나 선거구": [
+            ],
+            "김천시 다 선거구": [
+                { name: "이기유", party: "민주당", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100158767/gicho/100158767.JPG?ver=2014632" },
+                { name: "김상엽", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100155177/gicho/100155177.JPG?ver=1993157" },
+                { name: "이승우", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161789/gicho/100161789.JPG?ver=2037533" },
+                { name: "정재정", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161695/gicho/100161695.JPG?ver=2036865" },
+                { name: "하동계", party: "무소속", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100160785/gicho/100160785.JPG?ver=2027462" }
+            ],
+            "김천시 라 선거구": [
+                { name: "최완열", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100160015/gicho/100160015.JPG?ver=2020378" },
+                { name: "박대하", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161706/gicho/100161706.JPG?ver=2037527" },
+                { name: "배형태", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161700/gicho/100161700.JPG?ver=2036871" }
+            ],
+            "김천시 마 선거구": [
+                { name: "김석조", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161889/gicho/100161889.JPG?ver=2038440" },
+                { name: "김세호", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161872/gicho/100161872.JPG?ver=2038437" }
+            ],
+            "김천시 바 선거구": [
+                { name: "박희현", party: "민주당", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100157134/gicho/100157134.JPG?ver=2005025" },
+                { name: "노하룡", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100154565/gicho/100154565.JPG?ver=1991219" },
+                { name: "윤성호", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100156055/gicho/100156055.JPG?ver=1999241" },
+                { name: "박근혜", party: "국민의힘", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100161466/gicho/100161466.JPG?ver=2034173" },
+                { name: "장재호", party: "무소속", imageUrl: "https://info.nec.go.kr/photo_20260603/Gsg4705/Hb100157302/gicho/100157302.JPG?ver=2006163" },
+            ],
+            "김천시 사 선거구": [
+            ]
+        }; 
+        // --- ⬆️ 여기까지 ⬆️ ---
+        
+        let lockedDistrict = null; // Currently selected district on map
+
+        // --- Map Initialization ---
+        const map = L.map('map', { 
+            zoomControl: false,
+            dragging: false,          // 드래그 이동 비활성화
+            scrollWheelZoom: false,   // 마우스 휠 줌 비활성화
+            doubleClickZoom: false,   // 더블클릭 줌 비활성화
+            touchZoom: false,         // 모바일 터치 줌 비활성화
+            boxZoom: false,           // 박스 줌 비활성화
+            keyboard: false           // 키보드 조작 비활성화
+        });
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }).addTo(map);
+
+        let geojsonLayer;
+
+        // --- Fetch & Load GeoJSON ---
+        fetch(GEOJSON_URL)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loading-overlay').style.display = 'none';
+                renderGeoJSON(data);
+            })
+            .catch(error => {
+                console.error("GeoJSON 로드 실패:", error);
+                document.getElementById('loading-overlay').innerHTML = `
+                    <p class="text-red-500 font-bold">지도 데이터를 불러오지 못했습니다.</p>
+                    <p class="text-sm text-slate-500 mt-2">인터넷 연결을 확인하거나 나중에 다시 시도해주세요.</p>
+                `;
+            });
+
+        function renderGeoJSON(data) {
+            geojsonLayer = L.geoJSON(data, {
+                style: function() {
+                    return { color: '#64748b', weight: 2, fillColor: '#cbd5e1', fillOpacity: 0.4 };
+                },
+                onEachFeature: function(feature, layer) {
+                    const districtName = feature.properties.EMD_NM || "알 수 없는 선거구";
+                    
+                    // Initialize empty candidate list for every district if not exists
+                    if (!candidatesDB[districtName]) {
+                        candidatesDB[districtName] = [];
+                    }
+
+                    // Tooltip configuration
+                    layer.bindTooltip(districtName, {
+                        permanent: false,
+                        direction: "center",
+                        className: "font-bold text-sm bg-white border-0 shadow-md rounded px-2 py-1"
+                    });
+
+                    // Interactions
+                    layer.on({
+                        mouseover: highlightFeature,
+                        mouseout: resetHighlight,
+                        click: selectFeature
+                    });
+                }
+            }).addTo(map);
+
+            // 지도를 GeoJSON 영역에 딱 맞게 고정 (여백 30px)
+            map.fitBounds(geojsonLayer.getBounds(), { padding: [30, 30] });
+
+            // 화면 크기가 변해도 지도가 중앙에 꽉 차게 유지되도록 이벤트 추가
+            window.addEventListener('resize', () => {
+                map.fitBounds(geojsonLayer.getBounds(), { padding: [30, 30] });
+            });
+
+            updateChartData(); // Initial chart render
+        }
+
+        // --- Map Interactions ---
+        function highlightFeature(e) {
+            const layer = e.target;
+            const districtName = layer.feature.properties.EMD_NM;
+
+            layer.setStyle({ weight: 3, color: '#2563eb', fillColor: '#93c5fd', fillOpacity: 0.7 });
+            if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                layer.bringToFront();
+            }
+
+            // Only preview candidates if nothing is currently selected/locked
+            if (!lockedDistrict) {
+                renderViewMode(districtName);
+            }
+        }
+
+        function resetHighlight(e) {
+            const layer = e.target;
+            const districtName = layer.feature.properties.EMD_NM;
+            
+            if (lockedDistrict !== districtName) {
+                geojsonLayer.resetStyle(layer);
+            }
+
+            if (!lockedDistrict) {
+                clearPanel();
+            }
+        }
+
+        function selectFeature(e) {
+            const layer = e.target;
+            const districtName = layer.feature.properties.EMD_NM;
+
+            // Unhighlight previous
+            if (lockedDistrict && lockedDistrict !== districtName) {
+                geojsonLayer.eachLayer(l => {
+                    if (l.feature.properties.EMD_NM === lockedDistrict) geojsonLayer.resetStyle(l);
+                });
+            }
+
+            // Toggle logic
+            if (lockedDistrict === districtName) {
+                lockedDistrict = null;
+                geojsonLayer.resetStyle(layer);
+                clearPanel();
+            } else {
+                lockedDistrict = districtName;
+                layer.setStyle({ weight: 4, color: '#1d4ed8', fillColor: '#60a5fa', fillOpacity: 0.8 });
+                layer.bringToFront();
+                renderViewMode(districtName);
+            }
+        }
+
+        // --- UI Rendering (View / Chart) ---
+        const uiTitle = document.getElementById('district-title');
+        const uiBadge = document.getElementById('district-badge');
+        const uiContainer = document.getElementById('candidates-container');
+        const uiEmptyState = document.getElementById('empty-state');
+
+        function clearPanel() {
+            uiTitle.textContent = "선거구를 선택해주세요";
+            uiBadge.classList.add('hidden');
+            uiEmptyState.style.display = 'flex';
+            
+            const content = uiContainer.querySelector('.dynamic-content');
+            if (content) content.remove();
+        }
+
+        // 1. View Mode (기호 로직 포함)
+        function renderViewMode(districtName) {
+            uiTitle.textContent = districtName;
+            
+            // 데이터 원본을 건드리지 않기 위해 깊은 복사
+            const candidates = JSON.parse(JSON.stringify(candidatesDB[districtName] || []));
+            
+            uiBadge.textContent = `${candidates.length}명`;
+            uiBadge.classList.remove('hidden');
+            uiEmptyState.style.display = 'none';
+
+            // 정당별 인원수 계산
+            const partyCounts = {};
+            candidates.forEach(c => {
+                partyCounts[c.party] = (partyCounts[c.party] || 0) + 1;
+            });
+
+            // 정당별 현재 기호 인덱스
+            const partyCurrentIndex = {};
+            const suffixes = ['가', '나', '다', '라', '마', '바'];
+
+            // Remove previous content
+            const oldContent = uiContainer.querySelector('.dynamic-content');
+            if (oldContent) oldContent.remove();
+
+            let html = `<div class="dynamic-content space-y-3">`;
+            
+            if (candidates.length === 0) {
+                html += `
+                    <div class="text-center py-10 bg-slate-50 border border-slate-200 border-dashed rounded-xl">
+                        <p class="text-slate-500 font-medium">등록된 후보자가 없습니다.</p>
+                    </div>
+                `;
+            } else {
+                candidates.forEach(cand => {
+                    const partyInfo = PARTIES[cand.party] || { color: '#000', baseNumber: null };
+                    
+                    // --- 기호(Symbol) 결정 로직 ---
+                    let displaySymbol = "";
+                    if (partyInfo.baseNumber) {
+                        if (partyCounts[cand.party] > 1) {
+                            // 동일 정당 후보가 2명 이상이면 '가', '나', '다' 붙이기
+                            const idx = partyCurrentIndex[cand.party] || 0;
+                            displaySymbol = `${partyInfo.baseNumber}-${suffixes[idx]}`;
+                            partyCurrentIndex[cand.party] = idx + 1;
+                        } else {
+                            // 1명이면 기본 번호만 (예: 1, 2)
+                            displaySymbol = partyInfo.baseNumber;
+                        }
+                    }
+
+                    // 프로필 사진 HTML 구성
+                    let profileHtml = '';
+                    if (cand.imageUrl && cand.imageUrl.trim() !== '') {
+                        profileHtml = `<img src="${cand.imageUrl}" alt="${cand.name} 프로필 사진" class="w-full h-full object-cover" onerror="this.onerror=null; this.outerHTML='<svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'${partyInfo.color}\\' stroke-width=\\'1.5\\' class=\\'w-10 h-10 mt-3 opacity-80\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' d=\\'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z\\' /></svg>';" />`;
+                    } else {
+                        profileHtml = `
+                            <svg viewBox="0 0 24 24" fill="none" stroke="${partyInfo.color}" stroke-width="1.5" class="w-10 h-10 mt-3 opacity-80">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                        `;
+                    }
+
+                    html += `
+                        <div class="flex items-center p-3 border border-slate-100 rounded-xl bg-white shadow-sm">
+                            <div class="relative">
+                                <div class="w-14 h-14 rounded-full flex items-center justify-center border-2 overflow-hidden bg-slate-50" style="border-color: ${partyInfo.color}">
+                                    ${profileHtml}
+                                </div>
+                            </div>
+                            <div class="ml-4 flex-1">
+                                <div class="flex items-center gap-1.5 mb-1.5">
+                                    ${displaySymbol ? `<span class="px-2 py-0.5 text-[12px] font-black rounded border" style="color: ${partyInfo.color}; border-color: ${partyInfo.color};">기호 ${displaySymbol}</span>` : ''}
+                                    <span class="px-2 py-0.5 text-[11px] font-bold text-white rounded shadow-sm inline-block" style="background-color: ${partyInfo.color}">
+                                        ${cand.party}
+                                    </span>
+                                </div>
+                                <h3 class="text-lg font-bold text-slate-800 tracking-tight">${cand.name} <span class="text-sm font-normal text-slate-500">후보</span></h3>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            html += `</div>`;
+            uiContainer.insertAdjacentHTML('beforeend', html);
+        }
+
+        // --- Chart logic ---
+        let partyChart;
+        function initChart() {
+            const ctx = document.getElementById('partyChart').getContext('2d');
+            partyChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['더불어민주당', '국민의힘', '무소속'],
+                    datasets: [{
+                        data: [0, 0, 0], // Starting empty
+                        backgroundColor: [PARTIES['민주당'].color, PARTIES['국민의힘'].color, PARTIES['무소속'].color],
+                        borderWidth: 2,
+                        borderColor: '#ffffff',
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 8, font: {family: "'Pretendard', sans-serif"} } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` ${context.label}: ${context.raw}명`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        initChart();
+
+        function updateChartData() {
+            let stats = { "민주당": 0, "국민의힘": 0, "무소속": 0 };
+            
+            // Aggregate all candidates from all districts
+            Object.values(candidatesDB).forEach(districtCands => {
+                districtCands.forEach(cand => {
+                    if (stats[cand.party] !== undefined) {
+                        stats[cand.party]++;
+                    }
+                });
+            });
+
+            partyChart.data.datasets[0].data = [
+                stats['민주당'],
+                stats['국민의힘'],
+                stats['무소속']
+            ];
+            partyChart.update();
+        }
+
+    </script>
+</body>
+</html>
